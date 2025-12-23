@@ -1,106 +1,97 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from io import BytesIO
 
-# --- PAGE CONFIG ---
-st.set_page_config(layout="wide", page_title="ಶ್ರೀದುರ್ಗಾಪರಮೇಶ್ವರಿ ಸೇವಾಟ್ರಸ್ಟ್,ವಿಶ್ವನಾಥಪುರ")
+st.set_page_config(layout="wide", page_title="Auditor Pro v5.1")
 
-# --- SESSION STATE (Ledger Memory) ---
+# --- 1. SESSION STATE INITIALIZATION ---
+# This keeps your data alive across reruns
 if 'ledger' not in st.session_state:
     st.session_state.ledger = pd.DataFrame(columns=[
         "Date", "ID", "Name", "Items", "Ref_No", "Mode", "Inflow", "Outflow", "Net"
     ])
 
-# --- SIDEBAR: SETTINGS & OPENING BALANCE ---
-st.sidebar.header("📍 1. Initial Setup")
-trust_name = st.sidebar.text_input("Trust Name", "ಶ್ರೀದುರ್ಗಾಪರಮೇಶ್ವರಿ ಸೇವಾಟ್ರಸ್ಟ್")
-opn_bank = st.sidebar.number_input("Opening Bank Balance (₹)", value=0.0, step=0.01)
-opn_cash = st.sidebar.number_input("Opening Cash Balance (₹)", value=0.0, step=0.01)
-
-st.sidebar.markdown("---")
+# --- 2. SETTINGS ---
+st.sidebar.header("📍 Setup")
+opn_bal = st.sidebar.number_input("Opening Balance (Total)", value=0.0)
 inv_pre = st.sidebar.text_input("Invoice Prefix", "INV-")
-inv_start = st.sidebar.number_input("Invoice Start #", value=1001)
-exp_start = st.sidebar.number_input("Expense Start #", value=5001)
 
-# --- 2. FILE UPLOADER (Fix for Blurred Files) ---
-st.header("📂 2. Upload Bank/Cash Statements")
-# We set type=None to stop the browser from blurring files. We check the extension later.
-uploaded_files = st.file_uploader("Choose Bank or Cash CSV/Excel files", accept_multiple_files=True, type=None)
+# --- 3. IMPROVED FILE UPLOADER ---
+# Removed strict 'type' to prevent "blurred" files in some browsers
+uploaded_files = st.file_uploader("Upload CSV or Excel Statements", accept_multiple_files=True)
 
-if st.button("Process Uploaded Files"):
+if uploaded_files:
     for uploaded_file in uploaded_files:
-        if uploaded_file.name.endswith('.csv'):
-            new_data = pd.read_csv(uploaded_file)
-        else:
-            new_data = pd.read_excel(uploaded_file)
+        # Check if we already processed this specific file to avoid duplicates
+        file_key = f"processed_{uploaded_file.name}"
+        if file_key not in st.session_state:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                
+                # Append to our persistent ledger
+                st.session_state.ledger = pd.concat([st.session_state.ledger, df], ignore_index=True)
+                st.session_state[file_key] = True
+                st.success(f"Loaded: {uploaded_file.name}")
+            except Exception as e:
+                st.error(f"Error loading {uploaded_file.name}: {e}")
+
+# --- 4. MANUAL ENTRY ---
+with st.expander("➕ Add Manual Entry", expanded=False):
+    with st.form("manual_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            id_type = st.selectbox("ID", ["INV-", "EXP-", "inv-deposit", "exp-withdrawal", "inv-loan"])
+            mode = st.selectbox("Mode", ["Cash", "Bank"])
+        with col2:
+            name = st.text_input("Name")
+            item = st.text_input("Item", "Pooja Seve")
+        with col3:
+            amt = st.number_input("Amount", min_value=0.0)
+            ref = st.text_input("Ref No", "Manual")
         
-        # Merge logic (Simple append for this demo)
-        st.session_state.ledger = pd.concat([st.session_state.ledger, new_data], ignore_index=True)
-    st.success("Files Processed!")
+        if st.form_submit_button("Add Record"):
+            # Logic to generate next ID
+            if id_type == "INV-":
+                count = len(st.session_state.ledger[st.session_state.ledger['ID'].str.contains(inv_pre, na=False)])
+                id_type = f"{inv_pre}{1001 + count}"
+            
+            new_row = pd.DataFrame([{
+                "Date": datetime.now().strftime("%d-%m-%Y"),
+                "ID": id_type, "Name": name, "Items": item, "Ref_No": ref,
+                "Mode": mode, "Inflow": amt if "inv" in id_type.lower() else 0,
+                "Outflow": amt if "exp" in id_type.lower() else 0,
+                "Net": amt if "inv" in id_type.lower() else -amt
+            }])
+            st.session_state.ledger = pd.concat([st.session_state.ledger, new_row], ignore_index=True)
+            st.rerun() # Refresh to show new data immediately
 
-# --- 3. MANUAL ENTRY (With Iterative IDs) ---
-st.header("✍️ 3. Add Manual Transaction")
-with st.form("manual_form", clear_on_submit=True):
-    col1, col2, col3, col4 = st.columns(4)
+# --- 5. DISPLAY & DISCREPANCIES ---
+if not st.session_state.ledger.empty:
+    st.subheader("📊 Master Ledger")
     
-    with col1:
-        id_cat = st.selectbox("ID Category", [
-            "INV- (Iterative)", "EXP- (Iterative)", 
-            "inv-deposit", "inv-loan", "inv-other", "inv-OPBAL",
-            "exp-withdrawal", "exp-loan", "exp-FD", "exp-other"
-        ])
-    with col2:
-        mode = st.selectbox("Mode", ["Cash", "Bank"])
-    with col3:
-        name = st.text_input("Name/Particulars")
-    with col4:
-        amount = st.number_input("Amount (₹)", min_value=0.0)
+    # Editable table - changes here update the session_state automatically
+    edited_df = st.data_editor(st.session_state.ledger, use_container_width=True, num_rows="dynamic")
+    st.session_state.ledger = edited_df
 
-    item = st.text_input("Item Description", "Pooja Seve")
-    ref = st.text_input("Reference No", "Manual")
+    # Live Totals
+    total_in = edited_df['Inflow'].sum() + opn_bal
+    total_out = edited_df['Outflow'].sum()
     
-    if st.form_submit_button("Save Transaction"):
-        # ID Logic
-        final_id = id_cat
-        if id_cat == "INV- (Iterative)":
-            existing_invs = st.session_state.ledger[st.session_state.ledger['ID'].str.startswith(inv_pre, na=False)]
-            next_num = inv_start if existing_invs.empty else (len(existing_invs) + inv_start)
-            final_id = f"{inv_pre}{next_num}"
-        elif id_cat == "EXP- (Iterative)":
-            existing_exps = st.session_state.ledger[st.session_state.ledger['ID'].str.startswith("EXP-", na=False)]
-            next_num = exp_start if existing_exps.empty else (len(existing_exps) + exp_start)
-            final_id = f"EXP-{next_num}"
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Inflow", f"₹{total_in:,.2f}")
+    m2.metric("Total Outflow", f"₹{total_out:,.2f}")
+    m3.metric("Net Balance", f"₹{total_in - total_out:,.2f}")
 
-        is_inflow = "inv-" in final_id.lower() or inv_pre in final_id
-        
-        new_row = {
-            "Date": datetime.now().strftime("%d-%m-%Y"),
-            "ID": final_id, "Name": name, "Items": item, "Ref_No": ref,
-            "Mode": mode, "Inflow": amount if is_inflow else 0,
-            "Outflow": 0 if is_inflow else amount, "Net": amount if is_inflow else -amount
-        }
-        st.session_state.ledger = pd.concat([st.session_state.ledger, pd.DataFrame([new_row])], ignore_index=True)
+    # --- DISCREPANCY HIGHLIGHT ---
+    # Example: Highlight if any Cash Withdrawal from Bank doesn't match a Cash Deposit
+    bank_withdrawals = edited_df[(edited_df['ID'] == 'exp-withdrawal') & (edited_df['Mode'] == 'Bank')]['Outflow'].sum()
+    cash_deposits = edited_df[(edited_df['ID'] == 'inv-deposit') & (edited_df['Mode'] == 'Cash')]['Inflow'].sum()
+    
+    if bank_withdrawals != cash_deposits:
+        st.error(f"⚠️ Mismatch: Bank Withdrawal (₹{bank_withdrawals}) does not match Cash Deposit (₹{cash_deposits})")
+else:
+    st.info("Upload a file or add a manual entry to see the ledger.")
 
-# --- 4. LIVE EDITABLE LEDGER & BALANCE ---
-st.header("📊 4. Master Ledger & Live Balance")
-
-# st.data_editor allows you to click and change any cell directly!
-edited_df = st.data_editor(st.session_state.ledger, num_rows="dynamic", use_container_width=True)
-st.session_state.ledger = edited_df
-
-# Calculations
-tot_in = edited_df['Inflow'].sum() + opn_bank + opn_cash
-tot_out = edited_df['Outflow'].sum()
-closing = tot_in - tot_out
-
-c1, c2, c3 = st.columns(3)
-c1.metric("Total Inflow (+Opening)", f"₹{tot_in:,.2f}")
-c2.metric("Total Outflow", f"₹{tot_out:,.2f}")
-c3.metric("Closing Balance", f"₹{closing:,.2f}")
-
-# --- 5. EXPORT ---
-st.markdown("---")
-if st.button("Generate Regulatory CSV"):
-    csv = edited_df.to_csv(index=False)
-    st.download_button("Download CSV", csv, "Trust_Audit_Ready.csv", "text/csv")
