@@ -4,8 +4,7 @@ from datetime import datetime
 from io import BytesIO
 
 # --- PAGE CONFIG ---
-st.set_page_config(layout="wide", page_title="ಶ್ರೀದುರ್ಗಾಪರಮೇಶ್ವರಿ ಸೇವಾಟ್ರಸ್ಟ್,
-ವಿಶ್ವನಾಥಪುರ")
+st.set_page_config(layout="wide", page_title="ಶ್ರೀದುರ್ಗಾಪರಮೇಶ್ವರಿ ಸೇವಾಟ್ರಸ್ಟ್,ವಿಶ್ವನಾಥಪುರ")
 
 # --- SESSION STATE (Ledger Memory) ---
 if 'ledger' not in st.session_state:
